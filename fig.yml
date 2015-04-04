@@ -1,0 +1,26 @@
+consul:
+    image: qnib/consul
+    ports:
+     - "8500:8500"
+    environment:
+    - DC_NAME=dc1
+    - ENABLE_SYSLOG=true
+    dns: 127.0.0.1
+    hostname: consul
+    privileged: true
+
+slurmctld:
+    image: qnib/slurmctld
+    #ports:
+    #- "7474:7474"
+    links:
+    - consul:consul
+    environment:
+    - DC_NAME=dc1
+    #- SERVICE_7474_NAME=neo4j
+    - ENABLE_SYSLOG=true
+    volumes:
+    - ${HOME}/shared/chome/:/chome/
+    dns: 127.0.0.1
+    hostname: slurmctld
+    privileged: true

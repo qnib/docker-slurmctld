@@ -1,0 +1,10 @@
+{
+  "service": {
+    "name": "slurmctld",
+    "port": 6817,
+    "check": {
+      "script": "supervisorctl status slurmctld|grep RUNNING",
+      "interval": "10s"
+    }
+  }
+}
