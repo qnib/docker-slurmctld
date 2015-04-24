@@ -11,3 +11,6 @@ ADD opt/qnib/slurm/bin/ /opt/qnib/slurm/bin/
 # Slurmstats
 ADD etc/supervisord.d/slurmstats.ini /etc/supervisord.d/
 ADD opt/qnib/slurm/bin/slurmstats.py /opt/qnib/slurm/bin/
+# Scratch setup
+ADD etc/supervisord.d/scratchsetup.ini /etc/supervisord.d/
+ADD opt/qnib/slurm/bin/scratchsetup.sh /opt/qnib/slurm/bin/
