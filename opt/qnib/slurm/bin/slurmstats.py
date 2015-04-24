@@ -238,7 +238,9 @@ class SlurmStats(object):
                 if partition is not None:
                     partitions.append(partition)
                 partition = SctlPartition()
-            partition.eval_line(line)
+        if partition is None:
+            return
+        partition.eval_line(line)
         partitions.append(partition)
         for item in partitions:
             item.push()
@@ -268,9 +270,19 @@ class Jobs(object):
         """ initialise stats
         """
         self._cfg = cfg
-        self._gsend = graphitesend.init(graphite_server='carbon.service.consul',
+        self.con_gsend()
+
+    def con_gsend(self):
+        """ connect to graphite in a loop
+        """
+        try:
+            self._gsend = graphitesend.init(graphite_server='carbon.service.consul',
                                         prefix='slurm',
                                         system_name='stats')
+        except graphitesend.GraphiteSendException:
+            time.sleep(5)
+            self.con_gsend()
+
         self.wipe()
 
     def wipe(self):
