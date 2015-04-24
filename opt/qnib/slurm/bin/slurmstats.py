@@ -440,10 +440,13 @@ class SctlPartition(object):
     def push_consul(self):
         """ push information to consul backend
         """
-        self._consul.kv.put("slurm/partition/%(PartitionName)s/total_nodes" % self._info, self._info['TotalNodes'])
-        self._consul.kv.put("slurm/partition/%(PartitionName)s/total_cpus" % self._info, self._info['TotalCPUs'])
-        self._consul.kv.put("slurm/partition/%(PartitionName)s/state" % self._info, self._info['State'])
-        self._consul.kv.put("slurm/partition/%(PartitionName)s/nodes" % self._info, self._info['Nodes'])
+        try:
+            self._consul.kv.put("slurm/partition/%(PartitionName)s/total_nodes" % self._info, self._info['TotalNodes'])
+            self._consul.kv.put("slurm/partition/%(PartitionName)s/total_cpus" % self._info, self._info['TotalCPUs'])
+            self._consul.kv.put("slurm/partition/%(PartitionName)s/state" % self._info, self._info['State'])
+            self._consul.kv.put("slurm/partition/%(PartitionName)s/nodes" % self._info, self._info['Nodes'])
+        except KeyError:
+            pass
 
 
 def main():
