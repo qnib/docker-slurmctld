@@ -367,7 +367,10 @@ class SctlJob(object):
         :param line: stdout of 'scontrol show jobs'
         """
         for item in line.split():
-            key, val = item.split("=")
+            try:
+                key, val = item.split("=")
+            except ValueError:
+                continue
             if key == "NumNodes" and re.match("\d+\-\d+", val):
                 val = val.split("-")[0]
             try:
