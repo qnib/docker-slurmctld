@@ -339,14 +339,14 @@ class Jobs(object):
         """ Push stuff to consul KV
         """
 
-        self._cfg._logger.info("Push slurm stats per user")
+        self._cfg._logger.debug("Push slurm stats per user")
         for user, states in self._users.items():
             for state, stats in states.items():
                 for stat, val in stats.items():
                     key = "users.%s.%s.%s" % (user, state, stat)
                     self._cfg._logger.debug("> %s %s" % (key, val))
                     self._gsend.send(key, val)
-        self._cfg._logger.info("Push slurm stats per group")
+        self._cfg._logger.debug("Push slurm stats per group")
         for group, states in self._groups.items():
             for state, stats in states.items():
                 for stat, val in stats.items():
