@@ -31,6 +31,7 @@ import ast
 import sys
 import consul
 import graphitesend
+import ClusterShell
 import envoy
 from pprint import pprint
 from ConfigParser import RawConfigParser, NoOptionError
@@ -450,6 +451,13 @@ class SctlPartition(object):
             self._consul.kv.put("slurm/partition/%(PartitionName)s/nodes" % self._info, self._info['Nodes'])
         except KeyError:
             pass
+
+    def push_neo4j(self):
+        """ populate neo4j with partition information
+
+        (n:Node {name:<node_name>})-[:MEMBER_OF]->(p:Partition {name:<partition_name>})
+        """
+        pass
 
 
 def main():

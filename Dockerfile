@@ -3,7 +3,7 @@
 FROM qnib/slurm
 MAINTAINER "Christian Kniep <christian@qnib.org>"
 
-RUN pip install graphitesend
+RUN pip install graphitesend clustershell
 ADD etc/supervisord.d/slurmctld.ini /etc/supervisord.d/
 ADD etc/consul.d/check_slurmctld.json /etc/consul.d/
 ADD opt/qnib/slurm/bin/ /opt/qnib/slurm/bin/
