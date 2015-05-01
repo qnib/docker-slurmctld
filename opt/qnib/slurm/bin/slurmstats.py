@@ -9,6 +9,8 @@ Usage:
 Options:
     --delay <int>           Seconds delay inbetween loop runs [default: 4]
     --loop                  Loop the execution infinitely
+    --neo4j-host <str>      Neo4j host [default: neo4j.service.consul]
+
 Generic Options:
     --loglevel, -L=<str>    Loglevel [default: INFO]
                             (ERROR, CRITICAL, WARN, INFO, DEBUG)
@@ -31,10 +33,13 @@ import ast
 import sys
 import consul
 import graphitesend
-import ClusterShell
+from ClusterShell.NodeSet import NodeSet
 import envoy
 from pprint import pprint
 from ConfigParser import RawConfigParser, NoOptionError
+from requests.exceptions import ConnectionError
+from neo4jrestclient.client import GraphDatabase, Node
+from neo4jrestclient.query import QuerySequence
 
 try:
     from docopt import docopt
@@ -203,6 +208,66 @@ class QnibConfig(RawConfigParser):
             return self._opt[item]
 
 
+class Neo4j(object):
+    """" Class to abstract interactions
+    """
+    def __init__(self, cfg):
+        """ Init object
+        """
+        self._cfg = cfg
+        self.con_gdb()
+        self._labels = {}
+
+    def con_gdb(self):
+        """ connect to neo4j
+        """
+        url = "http://%(--neo4j-host)s:7474" % self._cfg
+        try:
+            self._gdb = GraphDatabase(url)
+        except ConnectionError:
+            time.sleep(3)
+            self.con_gdb()
+
+    def query(self, query):
+        self._cfg._logger.info(query)
+        res = self._gdb.query(query, returns=Node)
+        src_ret = self.unfold(res)
+        return src_ret
+
+    def unfold(self, res):
+        if isinstance(res, QuerySequence) and len(res) == 1:
+            return res[0][0]
+        if isinstance(res, list):
+            ret = res.pop()
+            self.unfold(ret)
+        else:
+            if isinstance(res, QuerySequence):
+                return None
+            return res
+
+    def create_node(self, label, **kwargs):
+        """ create node
+        """
+        if label not in self._labels:
+            self._labels[label] =  self._gdb.labels.create(label)
+        node = self._gdb.nodes.create(**kwargs)
+        self._labels[label].add(node)
+        return node
+
+    @staticmethod
+    def have_relationship(label, dst, src):
+        """ Checks if node is member of partition
+        :param gnode: Neo4j object of Node
+        :param gpart: Neo4j object of Partition
+        :return: True if member, else False
+        """
+        for rel in dst.relationships:
+            if rel.type == label and rel.start.properties['name'] == src.properties['name']:
+                return True
+        return False
+
+
+
 class SlurmStats(object):
     """ Fetch SLURM statistics and push them to the metric system
     """
@@ -213,7 +278,7 @@ class SlurmStats(object):
         self._cfg = cfg
         self._consul = consul.Consul()
         self._jobs = Jobs(self._cfg)
-
+        self._n4j = Neo4j(cfg)
 
     def loop(self):
         """  loop over run
@@ -238,10 +303,10 @@ class SlurmStats(object):
             if line.startswith("PartitionName"):
                 if partition is not None:
                     partitions.append(partition)
-                partition = SctlPartition()
+                partition = SctlPartition(self._cfg, self._consul, self._n4j)
+            partition.eval_line(line)
         if partition is None:
             return
-        partition.eval_line(line)
         partitions.append(partition)
         for item in partitions:
             item.push()
@@ -256,7 +321,7 @@ class SlurmStats(object):
             if line.startswith("JobId"):
                 if job is not None:
                     self._jobs.append(job)
-                job = SctlJob()
+                job = SctlJob(self._cfg, self._consul, self._n4j)
             elif job is None:
                 return
             job.eval_line(line)
@@ -271,6 +336,7 @@ class Jobs(object):
         """ initialise stats
         """
         self._cfg = cfg
+        self.jobs = []
         self.con_gsend()
 
     def con_gsend(self):
@@ -297,6 +363,7 @@ class Jobs(object):
     def append(self, job):
         """ sum up stats
         """
+        self.jobs.append(job)
         if job._info['JobState'] not in ("RUNNING", "PENDING"):
             return
         user, uid = re.match("(\w+)\((\d+)\)", job._info['UserId']).groups()
@@ -337,9 +404,15 @@ class Jobs(object):
             self._groups[group][job._info['JobState']]["cpus"] += job._info['NumCPUs']
 
     def push(self):
-        """ Push stuff to consul KV
+        """ push to backend
         """
+        self.push_graphite()
+        for job in self.jobs:
+            job.push()
 
+    def push_graphite(self):
+        """ Push stuff to carbon
+        """
         self._cfg._logger.debug("Push slurm stats per user")
         for user, states in self._users.items():
             for state, stats in states.items():
@@ -356,12 +429,15 @@ class Jobs(object):
                     self._gsend.send(key, val)
 
 
+
 class SctlJob(object):
     """ Class to build up information about a job provided by scontrol
     """
-    def __init__(self):
+    def __init__(self, cfg, consul_cli, n4j):
+        self._cfg = cfg
         self._info = {}
-        self._consul = consul.Consul()
+        self._consul = consul_cli
+        self._n4j = n4j
 
     def eval_line(self, line):
         """ enriches object to evaluate scrontol output
@@ -371,6 +447,12 @@ class SctlJob(object):
             try:
                 key, val = item.split("=")
             except ValueError:
+                continue
+            if key == "NodeList" and val == "(null)":
+                self._info[key] = None
+                continue
+            elif key == "JobId":
+                self._info[key] = val
                 continue
             if key == "NumNodes" and re.match("\d+\-\d+", val):
                 val = val.split("-")[0]
@@ -395,7 +477,8 @@ class SctlJob(object):
     def push(self):
         """ push information to backend
         """
-        self.push_consul()
+        #self.push_consul()
+        self.push_neo4j()
 
     def push_consul(self):
         """ push information to consul backend
@@ -410,13 +493,39 @@ class SctlJob(object):
         # Push
         #self._consul.kv.put("slurm/job/%(JobId)s/nodes" % self._info, self._info['TotalNodes'])
 
+    def push_neo4j(self):
+        """ populate neo4j with job information
+
+        (n:Node {name:<node_name>})-[:PART_OF]->(j:Job {jobid:<jobid>, name:<jobname>})
+        """
+        query = "MATCH (j:Job) WHERE j.jobid='%(JobId)s' RETURN j" % self._info
+        gjob = self._n4j.query(query)
+        if gjob is None:
+            self._cfg._logger.info("No job found, create '%(JobId)s'" % self._info)
+            gjob = self._n4j.create_node("Job", jobid=self._info['JobId'], name=self._info['JobName'], state=self._info['JobState'])
+        if gjob.properties['state'] != self._info['JobState']:
+            self._cfg._logger.warn("Jobstate has changed... %s -> %s" % (gjob.properties['state'], self._info['JobState']))
+            gjob['state'] = self._info['JobState']
+
+        for node in NodeSet(self._info['NodeList']):
+            query = "MATCH (n:Node) WHERE n.name='%s' RETURN n" % node
+            gnode = self._n4j.query(query)
+            if gnode is None:
+                self._cfg._logger.info("No node found, create '%s'" % node)
+                gnode = self._n4j.create_node("Node", name=node)
+                gnode.relationships.create("PART_OF", gjob)
+            if not self._n4j.have_relationship("PART_OF", gjob, gnode):
+                gnode.relationships.create("PART_OF", gjob)
+
 
 class SctlPartition(object):
     """ Class to build up information about a partition provided by scontrol
     """
-    def __init__(self):
+    def __init__(self, cfg, consul_cli, n4j):
+        self._cfg = cfg
         self._info = {}
-        self._consul = consul.Consul()
+        self._consul = consul_cli
+        self._n4j = n4j
 
     def eval_line(self, line):
         """ enriches object to evaluate scrontol output
@@ -424,6 +533,8 @@ class SctlPartition(object):
         """
         for item in line.split():
             key, val = item.split("=")
+            if val.startswith(","):
+                val = val[1:]
             self._info[key] = val
 
     def __str__(self):
@@ -440,6 +551,7 @@ class SctlPartition(object):
         """ push information to backend
         """
         self.push_consul()
+        self.push_neo4j()
 
     def push_consul(self):
         """ push information to consul backend
@@ -455,9 +567,38 @@ class SctlPartition(object):
     def push_neo4j(self):
         """ populate neo4j with partition information
 
-        (n:Node {name:<node_name>})-[:MEMBER_OF]->(p:Partition {name:<partition_name>})
+        (n:Node {name:<node_name>})-[:MEMBER]->(p:Partition {name:<partition_name>})
         """
-        pass
+        query = "MATCH (p:Partition) WHERE p.name='%(PartitionName)s' RETURN p" % self._info
+        gpart = self._n4j.query(query)
+        if gpart is None:
+            self._cfg._logger.info("No partition found, create '%s'" % gpart)
+            gpart = self._n4j.create_node("Partition", name=self._info['PartitionName'])
+        if self._info['Nodes'] is None:
+            return
+        for node in NodeSet(self._info['Nodes']):
+            query = "MATCH (n:Node) WHERE n.name='%s' RETURN n" % node
+            gnode = self._n4j.query(query)
+            if gnode is None:
+                self._cfg._logger.info("No node found, create '%s'" % node)
+                gnode = self._n4j.create_node("Node", name=node)
+                gpart.relationships.create("MEMBER", gnode)
+            if not self.is_partition_member(gnode, gpart):
+                gpart.relationships.create("MEMBER", gnode)
+
+
+    @staticmethod
+    def is_partition_member(gnode, gpart):
+        """ Checks if node is member of partition
+        :param gnode: Neo4j object of Node
+        :param gpart: Neo4j object of Partition
+        :return: True if member, else False
+        """
+        for rel in gnode.relationships:
+            if rel.type == "MEMBER" and rel.start.properties['name'] == gpart.properties['name']:
+                return True
+        return False
+
 
 
 def main():
