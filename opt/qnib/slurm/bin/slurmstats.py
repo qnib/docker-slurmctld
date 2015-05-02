@@ -235,11 +235,11 @@ class Neo4j(object):
         return src_ret
 
     def unfold(self, res):
-        if isinstance(res, QuerySequence) and len(res) == 1:
-            return res[0][0]
-        if isinstance(res, list):
+        if all([isinstance(item[0], Node) for item in res]):
+            return [item[0] for item in res]
+        elif isinstance(res, list):
             ret = res.pop()
-            self.unfold(ret)
+            return self.unfold(ret)
         else:
             if isinstance(res, QuerySequence):
                 return None
@@ -311,6 +311,14 @@ class SlurmStats(object):
         for item in partitions:
             item.push()
 
+    def cache_users(self):
+        """ build hashmap with users and node references, to help build up relationships
+
+        passed around through cfg instance
+        """
+        nodes = self._n4j.query()
+
+
     def eval_job(self):
         """ Evaluate job output
         """
@@ -366,8 +374,8 @@ class Jobs(object):
         self.jobs.append(job)
         if job._info['JobState'] not in ("RUNNING", "PENDING"):
             return
-        user, uid = re.match("(\w+)\((\d+)\)", job._info['UserId']).groups()
         # per user
+        user = job._info['User']
         if user not in self._users:
             self._users[user] = {
                 "RUNNING": {
@@ -382,8 +390,8 @@ class Jobs(object):
                     },
                 }
         self._users[user][job._info['JobState']]["jobs"] += 1
-        self._users[user][job._info['JobState']]["nodes"] += job._info['NumNodes']
-        self._users[user][job._info['JobState']]["cpus"] += job._info['NumCPUs']
+        self._users[user][job._info['JobState']]["nodes"] += int(job._info['NumNodes'])
+        self._users[user][job._info['JobState']]["cpus"] += int(job._info['NumCPUs'])
         # per groups
         for group in [g.gr_name for g in grp.getgrall() if user in g.gr_mem]:
             if group not in self._groups:
@@ -400,8 +408,8 @@ class Jobs(object):
                     },
                 }
             self._groups[group][job._info['JobState']]["jobs"] += 1
-            self._groups[group][job._info['JobState']]["nodes"] += job._info['NumNodes']
-            self._groups[group][job._info['JobState']]["cpus"] += job._info['NumCPUs']
+            self._groups[group][job._info['JobState']]["nodes"] += int(job._info['NumNodes'])
+            self._groups[group][job._info['JobState']]["cpus"] += int(job._info['NumCPUs'])
 
     def push(self):
         """ push to backend
@@ -449,17 +457,17 @@ class SctlJob(object):
             except ValueError:
                 continue
             if key == "NodeList" and val == "(null)":
-                self._info[key] = None
-                continue
-            elif key == "JobId":
-                self._info[key] = val
-                continue
+                val = None
             if key == "NumNodes" and re.match("\d+\-\d+", val):
                 val = val.split("-")[0]
-            try:
-                self._info[key] = float(val)
-            except ValueError:
-                self._info[key] = val
+            elif key in ("UserId", "GroupId"):
+                mat = re.match("(\w+)\((\d+)\)", val)
+                name, val = mat.groups()
+                if key == "UserId":
+                    self._info["User"] = name
+                else:
+                    self._info["Group"] = name
+            self._info[key] = val
 
 
     def __str__(self):
@@ -500,20 +508,29 @@ class SctlJob(object):
         """
         query = "MATCH (j:Job) WHERE j.jobid='%(JobId)s' RETURN j" % self._info
         gjob = self._n4j.query(query)
-        if gjob is None:
+        if len(gjob) == 0:
             self._cfg._logger.info("No job found, create '%(JobId)s'" % self._info)
             gjob = self._n4j.create_node("Job", jobid=self._info['JobId'], name=self._info['JobName'], state=self._info['JobState'])
+        else:
+            # since we got a list back... it has to be an one-item list
+            gjob = gjob.pop()
         if gjob.properties['state'] != self._info['JobState']:
             self._cfg._logger.warn("Jobstate has changed... %s -> %s" % (gjob.properties['state'], self._info['JobState']))
             gjob['state'] = self._info['JobState']
 
+
+        #if not self._n4j.have_relationship("PART_OF", gjob, gnode):
+        #    gnode.relationships.create("PART_OF", gjob)
+
         for node in NodeSet(self._info['NodeList']):
             query = "MATCH (n:Node) WHERE n.name='%s' RETURN n" % node
             gnode = self._n4j.query(query)
-            if gnode is None:
+            if len(gnode) == 0:
                 self._cfg._logger.info("No node found, create '%s'" % node)
                 gnode = self._n4j.create_node("Node", name=node)
                 gnode.relationships.create("PART_OF", gjob)
+            # since we got a list back... it has to be an one-item list
+            gnode = gnode.pop()
             if not self._n4j.have_relationship("PART_OF", gjob, gnode):
                 gnode.relationships.create("PART_OF", gjob)
 
@@ -571,18 +588,22 @@ class SctlPartition(object):
         """
         query = "MATCH (p:Partition) WHERE p.name='%(PartitionName)s' RETURN p" % self._info
         gpart = self._n4j.query(query)
-        if gpart is None:
+        if len(gpart) == 0:
             self._cfg._logger.info("No partition found, create '%s'" % gpart)
             gpart = self._n4j.create_node("Partition", name=self._info['PartitionName'])
+        else:
+            gpart = gpart.pop()
         if self._info['Nodes'] is None:
             return
         for node in NodeSet(self._info['Nodes']):
             query = "MATCH (n:Node) WHERE n.name='%s' RETURN n" % node
             gnode = self._n4j.query(query)
-            if gnode is None:
+            if len(gnode) == 0:
                 self._cfg._logger.info("No node found, create '%s'" % node)
                 gnode = self._n4j.create_node("Node", name=node)
                 gpart.relationships.create("MEMBER", gnode)
+            else:
+                gnode = gnode.pop()
             if not self.is_partition_member(gnode, gpart):
                 gpart.relationships.create("MEMBER", gnode)
 
