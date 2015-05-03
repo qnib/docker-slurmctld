@@ -309,13 +309,13 @@ class NetX(object):
             self._cfg._logger.info("add root->%s" % val)
 
     def dump(self, path="/tmp/network.gpickle"):
-        self._cfg._logger.info("%-5s > Dump graph to '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
+        self._cfg._logger.debug("%-5s > Dump graph to '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
         nx.write_gpickle(self._graph, path)
 
     def restore(self, path="/tmp/network.gpickle"):
         """ restore graph from file
         """
-        self._cfg._logger.info("%-5s > Restore graph from '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
+        self._cfg._logger.debug("%-5s > Restore graph from '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
         self._graph = nx.read_gpickle(path)
 
     def change_color(self, node, color, jobid=""):
@@ -324,7 +324,6 @@ class NetX(object):
         :param color: color
         """
         self._graph.node[node]["color"] = color
-        print jobid
         self._graph.node[node]["jobid"] = jobid
 
 
@@ -365,9 +364,7 @@ class NetX(object):
 
         # nodes
         nx.draw_networkx_nodes(self._graph, pos, node_size=1200, nodelist=sw_names, node_color=sw_colors)
-        print "busy: ", com_nodes["busy"]
         nx.draw_networkx_nodes(self._graph, pos, node_size=4000, nodelist=com_nodes["busy"].keys(), node_color=com_nodes["busy"].values())
-        print "idle: ", com_nodes["idle"]
         nx.draw_networkx_nodes(self._graph, pos, node_size=3600, nodelist=com_nodes["idle"].keys(), node_color=com_nodes["idle"].values())
 
         # edges
@@ -376,7 +373,7 @@ class NetX(object):
         # labels
         nx.draw_networkx_labels(self._graph, pos, labels=labels, font_size=12, font_family='sans-serif')
         # save as png
-        self._cfg._logger.info("savefig(%s)" % os.path.join(path, fname))
+        self._cfg._logger.debug("savefig(%s)" % os.path.join(path, fname))
         plt.savefig(os.path.join(path, fname))
         plt.clf()
 
