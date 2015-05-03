@@ -544,12 +544,13 @@ class Jobs(object):
         """ push to backend
         """
         self.push_graphite()
+        color_map = [item for item in self._graph_color]
         for job in self.jobs:
             job.push()
-            color = self._graph_color.pop()
+            color = color_map.pop()
             if not job.add_to_graph(color):
                 # if False, job was not added (!= RUNNING)
-                self._graph_color.append(color)
+                color_map.append(color)
 
         netx = NetX(self._cfg)
         netx.restore()
