@@ -7,7 +7,7 @@ Usage:
     slurmstats.py [options]
 
 Options:
-    --delay <int>           Seconds delay inbetween loop runs [default: 4]
+    --delay <int>           Seconds delay inbetween loop runs [default: 10]
     --loop                  Loop the execution infinitely
     --neo4j-host <str>      Neo4j host [default: neo4j.service.consul]
 
@@ -327,8 +327,10 @@ class NetX(object):
         self._graph.node[node]["jobid"] = jobid
 
 
-    def draw(self, path="/var/www/slurm/", fname="jobs.png", plain=True, jobid=""):
+    def draw(self, path="/var/www/slurm/", fname="jobs.png", plain=True, jobid="", replace=True):
         # positions for all nodes
+        if not replace and os.path.exists(os.path.join(path, fname)):
+            return
         pos = nx.graphviz_layout(self._graph, prog='twopi', args='')
         sw_names = [item[0] for item in self._graph.nodes(data=True) if item[1]['type'] == "switch"]
         sw_colors = [item[1]['color'] for item in self._graph.nodes(data=True) if item[1]['type'] == "switch"]
@@ -399,6 +401,7 @@ class SlurmStats(object):
         self._consul = consul.Consul()
         self._jobs = Jobs(self._cfg)
         self._n4j = Neo4j(cfg)
+        self._last_run = time.time()
         netx = NetX(cfg)
         netx.bootstrap()
         netx.dump()
@@ -408,7 +411,12 @@ class SlurmStats(object):
         """
         while True:
             self.run()
-            time.sleep(int(self._cfg['--delay']))
+            now = time.time()
+            since = now - self._last_run
+            delay = max(0, int(self._cfg['--delay']) - since)
+            self._cfg._logger.info("Took: %ssec, sleep for %ssec" % (since, delay))
+            self._last_run = now
+            time.sleep(delay)
 
     def run(self):
         """ do the work
@@ -474,7 +482,7 @@ class Jobs(object):
         self._cfg = cfg
         self.jobs = []
         self.con_gsend()
-        self._graph_color = ["green", "purple", "orange", "red", "yellow", "darkgreen", "lightblue"]
+        self._graph_color = ["green", "purple", "orange", "red", "yellow", "lightblue"]
 
     def con_gsend(self):
         """ connect to graphite in a loop
@@ -558,8 +566,8 @@ class Jobs(object):
         netx = NetX(self._cfg)
         netx.restore()
         for job in self.jobs:
-            if job._info["JobState"] != "PENDING":
-                netx.draw(fname="job_%(JobId)s.png" % job._info, plain=False, jobid=job._info["JobId"])
+            if job._info["JobState"] == "RUNNING":
+                netx.draw(fname="job_%(JobId)s.png" % job._info, plain=False, jobid=job._info["JobId"], replace=False)
 
         netx.draw(fname="jobs.png", plain=False)
 
@@ -670,7 +678,7 @@ class SctlJob(object):
             # since we got a list back... it has to be an one-item list
             gjob = gjob.pop()
         if gjob.properties['state'] != self._info['JobState']:
-            self._cfg._logger.warn("Jobstate has changed... %s -> %s" % (gjob.properties['state'], self._info['JobState']))
+            self._cfg._logger.warn("Jobstate '%s' has changed... %s -> %s" % (self._info['JobId'], gjob.properties['state'], self._info['JobState']))
             gjob['state'] = self._info['JobState']
 
 
