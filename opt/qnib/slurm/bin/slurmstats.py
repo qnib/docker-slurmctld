@@ -23,6 +23,7 @@ Generic Options:
 """
 
 # load librarys
+import traceback
 import logging
 import os
 import re
@@ -40,6 +41,10 @@ from ConfigParser import RawConfigParser, NoOptionError
 from requests.exceptions import ConnectionError
 from neo4jrestclient.client import GraphDatabase, Node
 from neo4jrestclient.query import QuerySequence
+import networkx as nx
+import matplotlib.pyplot as plt
+
+
 
 try:
     from docopt import docopt
@@ -207,6 +212,11 @@ class QnibConfig(RawConfigParser):
         else:
             return self._opt[item]
 
+    def __setitem__(self, key, value):
+        """ set item to
+        """
+        self.__dict__[key] = value
+
 
 class Neo4j(object):
     """" Class to abstract interactions
@@ -229,7 +239,7 @@ class Neo4j(object):
             self.con_gdb()
 
     def query(self, query):
-        self._cfg._logger.info(query)
+        self._cfg._logger.debug(query)
         res = self._gdb.query(query, returns=Node)
         src_ret = self.unfold(res)
         return src_ret
@@ -267,6 +277,119 @@ class Neo4j(object):
         return False
 
 
+class NetX(object):
+    """ Holds networkx graph
+    """
+    def __init__(self, cfg):
+        self._cfg = cfg
+        self._sw_map = {
+            "odd": "sw1",
+            "even": "sw0",
+            }
+
+    def __str__(self):
+        """ Prints edges and nodes
+        :return: string
+        """
+        txt = []
+        for edge in self._graph.edges():
+            txt.append("%s -> %s" % edge)
+        return "\n".join(txt)
+
+
+    def bootstrap(self):
+        """ initiaize CLOS2 graph
+        """
+        self._graph = nx.DiGraph()
+        # Hard coded CLOS2 network with odd nodes on sw1, even nodes on sw0
+        self._graph.add_node("root", color="blue", type="switch")
+        for key, val in self._sw_map.items():
+            self._graph.add_node(val, color="blue", partition=key, type="switch")
+            self._graph.add_edge("root", val)
+            self._cfg._logger.info("add root->%s" % val)
+
+    def dump(self, path="/tmp/network.gpickle"):
+        self._cfg._logger.info("%-5s > Dump graph to '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
+        nx.write_gpickle(self._graph, path)
+
+    def restore(self, path="/tmp/network.gpickle"):
+        """ restore graph from file
+        """
+        self._cfg._logger.info("%-5s > Restore graph from '%s'" % (traceback.extract_stack(None, 2)[0][1], path))
+        self._graph = nx.read_gpickle(path)
+
+    def change_color(self, node, color, jobid=""):
+        """ change color of given node
+        :param node: node name
+        :param color: color
+        """
+        self._graph.node[node]["color"] = color
+        print jobid
+        self._graph.node[node]["jobid"] = jobid
+
+
+    def draw(self, path="/var/www/slurm/", fname="jobs.png", plain=True, jobid=""):
+        # positions for all nodes
+        pos = nx.graphviz_layout(self._graph, prog='twopi', args='')
+        sw_names = [item[0] for item in self._graph.nodes(data=True) if item[1]['type'] == "switch"]
+        sw_colors = [item[1]['color'] for item in self._graph.nodes(data=True) if item[1]['type'] == "switch"]
+        if plain:
+            labels = dict((item[0], item[0]) for item in self._graph.nodes(data=True))
+        else:
+            labels = dict((item[0], item[0]) for item in self._graph.nodes(data=True) if item[1]['type'] == "switch")
+            labels.update(dict((item[0], item[0]) for item in self._graph.nodes(data=True) if item[1]['type'] == "compute" and item[1]['jobid'] == ""))
+            if jobid == "":
+                labels.update(dict((item[0], "%s\nJobID: %s" % (item[0], item[1]['jobid'])) for item in self._graph.nodes(data=True) if item[1]['type'] == "compute" and item[1]['jobid'] != ""))
+            else:
+                labels.update(dict((item[0], item[0]) for item in self._graph.nodes(data=True) if item[1]['type'] == "compute" and item[1]['jobid'] != jobid))
+                labels.update(dict((item[0], "%s\nJobID: %s" % (item[0], item[1]['jobid'])) for item in self._graph.nodes(data=True) if item[1]['type'] == "compute" and item[1]['jobid'] == jobid))
+
+        com_nodes = {
+            "busy": {},
+            "idle": {}
+        }
+        for item in self._graph.nodes(data=True):
+            if item[1]['type'] != "compute":
+                continue
+            if item[1]['jobid'] != "":
+                key = "busy"
+            else:
+                key = "idle"
+            if jobid == "":
+                com_nodes[key][item[0]] = item[1]["color"]
+            elif item[1]["jobid"] == jobid:
+                com_nodes[key][item[0]] = item[1]["color"]
+            else:
+                com_nodes[key][item[0]] = "grey"
+
+
+        # nodes
+        nx.draw_networkx_nodes(self._graph, pos, node_size=1200, nodelist=sw_names, node_color=sw_colors)
+        print "busy: ", com_nodes["busy"]
+        nx.draw_networkx_nodes(self._graph, pos, node_size=4000, nodelist=com_nodes["busy"].keys(), node_color=com_nodes["busy"].values())
+        print "idle: ", com_nodes["idle"]
+        nx.draw_networkx_nodes(self._graph, pos, node_size=3600, nodelist=com_nodes["idle"].keys(), node_color=com_nodes["idle"].values())
+
+        # edges
+        nx.draw_networkx_edges(self._graph, pos)
+
+        # labels
+        nx.draw_networkx_labels(self._graph, pos, labels=labels, font_size=12, font_family='sans-serif')
+        # save as png
+        self._cfg._logger.info("savefig(%s)" % os.path.join(path, fname))
+        plt.savefig(os.path.join(path, fname))
+        plt.clf()
+
+    def add_partition_edge(self, pname, node):
+        """ Adds link between partition switch and node
+        """
+        if pname not in self._sw_map.keys():
+            return
+        sw_name = self._sw_map[pname]
+        self._cfg._logger.info("add %s->%s" % (sw_name, node))
+        self._graph.add_node(node, color="grey", type="compute", jobid="")
+        self._graph.add_edge(sw_name, node)
+
 
 class SlurmStats(object):
     """ Fetch SLURM statistics and push them to the metric system
@@ -279,6 +402,9 @@ class SlurmStats(object):
         self._consul = consul.Consul()
         self._jobs = Jobs(self._cfg)
         self._n4j = Neo4j(cfg)
+        netx = NetX(cfg)
+        netx.bootstrap()
+        netx.dump()
 
     def loop(self):
         """  loop over run
@@ -310,6 +436,10 @@ class SlurmStats(object):
         partitions.append(partition)
         for item in partitions:
             item.push()
+        netx = NetX(self._cfg)
+        netx.restore()
+        netx.draw(fname="partition.png", plain=True)
+        del netx
 
     def cache_users(self):
         """ build hashmap with users and node references, to help build up relationships
@@ -331,6 +461,7 @@ class SlurmStats(object):
                     self._jobs.append(job)
                 job = SctlJob(self._cfg, self._consul, self._n4j)
             elif job is None:
+                self._jobs.push()
                 return
             job.eval_line(line)
         self._jobs.append(job)
@@ -346,6 +477,7 @@ class Jobs(object):
         self._cfg = cfg
         self.jobs = []
         self.con_gsend()
+        self._graph_color = ["green", "purple", "orange", "red"]
 
     def con_gsend(self):
         """ connect to graphite in a loop
@@ -417,6 +549,18 @@ class Jobs(object):
         self.push_graphite()
         for job in self.jobs:
             job.push()
+            color = self._graph_color.pop()
+            if not job.add_to_graph(color):
+                # if False, job was not added (!= RUNNING)
+                self._graph_color.append(color)
+
+        netx = NetX(self._cfg)
+        netx.restore()
+        for job in self.jobs:
+            if job._info["JobState"] != "PENDING":
+                netx.draw(fname="job_%(JobId)s.png" % job._info, plain=False, jobid=job._info["JobId"])
+
+        netx.draw(fname="jobs.png", plain=False)
 
     def push_graphite(self):
         """ Push stuff to carbon
@@ -435,7 +579,6 @@ class Jobs(object):
                     key = "groups.%s.%s.%s" % (group, state, stat)
                     self._cfg._logger.debug("> %s %s" % (key, val))
                     self._gsend.send(key, val)
-
 
 
 class SctlJob(object):
@@ -469,7 +612,6 @@ class SctlJob(object):
                     self._info["Group"] = name
             self._info[key] = val
 
-
     def __str__(self):
         """ human readable outout
         :return: string describing job
@@ -487,6 +629,18 @@ class SctlJob(object):
         """
         #self.push_consul()
         self.push_neo4j()
+
+    def add_to_graph(self, color):
+        """ color nodes of RUNNING jobs
+        """
+        if self._info['JobState'] != "RUNNING":
+            return False
+        netx = NetX(self._cfg)
+        netx.restore()
+        for node in NodeSet(self._info['NodeList']):
+            netx.change_color(node, color, self._info["JobId"])
+        netx.dump()
+        return True
 
     def push_consul(self):
         """ push information to consul backend
@@ -529,8 +683,9 @@ class SctlJob(object):
                 self._cfg._logger.info("No node found, create '%s'" % node)
                 gnode = self._n4j.create_node("Node", name=node)
                 gnode.relationships.create("PART_OF", gjob)
-            # since we got a list back... it has to be an one-item list
-            gnode = gnode.pop()
+            else:
+                # since we got a list back... it has to be an one-item list
+                gnode = gnode.pop()
             if not self._n4j.have_relationship("PART_OF", gjob, gnode):
                 gnode.relationships.create("PART_OF", gjob)
 
@@ -586,6 +741,8 @@ class SctlPartition(object):
 
         (n:Node {name:<node_name>})-[:MEMBER]->(p:Partition {name:<partition_name>})
         """
+        netx = NetX(self._cfg)
+        netx.restore()
         query = "MATCH (p:Partition) WHERE p.name='%(PartitionName)s' RETURN p" % self._info
         gpart = self._n4j.query(query)
         if len(gpart) == 0:
@@ -604,8 +761,10 @@ class SctlPartition(object):
                 gpart.relationships.create("MEMBER", gnode)
             else:
                 gnode = gnode.pop()
+            netx.add_partition_edge(self._info['PartitionName'], node)
             if not self.is_partition_member(gnode, gpart):
                 gpart.relationships.create("MEMBER", gnode)
+        netx.dump()
 
 
     @staticmethod
