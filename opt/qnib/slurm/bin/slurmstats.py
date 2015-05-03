@@ -474,7 +474,7 @@ class Jobs(object):
         self._cfg = cfg
         self.jobs = []
         self.con_gsend()
-        self._graph_color = ["green", "purple", "orange", "red"]
+        self._graph_color = ["green", "purple", "orange", "red", "yellow", "darkgreen", "lightblue"]
 
     def con_gsend(self):
         """ connect to graphite in a loop
@@ -547,6 +547,9 @@ class Jobs(object):
         color_map = [item for item in self._graph_color]
         for job in self.jobs:
             job.push()
+            if len(color_map) == 0:
+                # TODO: Dirty hack to prevent slurmstats from crashing...
+                color_map = [item for item in self._graph_color]
             color = color_map.pop()
             if not job.add_to_graph(color):
                 # if False, job was not added (!= RUNNING)
