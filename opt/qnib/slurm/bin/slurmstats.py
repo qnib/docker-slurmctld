@@ -296,7 +296,6 @@ class NetX(object):
             txt.append("%s -> %s" % edge)
         return "\n".join(txt)
 
-
     def bootstrap(self):
         """ initiaize CLOS2 graph
         """
@@ -325,7 +324,6 @@ class NetX(object):
         """
         self._graph.node[node]["color"] = color
         self._graph.node[node]["jobid"] = jobid
-
 
     def draw(self, path="/var/www/slurm/", fname="jobs.png", plain=True, jobid="", replace=True):
         # positions for all nodes
@@ -662,7 +660,7 @@ class SctlJob(object):
             if mat:
                  partitions[mat.group(1)] = item['Value'].split(",")
         # Push
-        #self._consul.kv.put("slurm/job/%(JobId)s/nodes" % self._info, self._info['TotalNodes'])
+        self._consul.kv.put("slurm/job/%(JobId)s/nodes" % self._info, self._info['TotalNodes'])
 
     def push_neo4j(self):
         """ populate neo4j with job information
