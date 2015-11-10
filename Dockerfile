@@ -1,7 +1,5 @@
-###### Slurmctld images
-# A docker image that provides a slurmctld
+###### QNIBTerminal images
 FROM qnib/slurm
-MAINTAINER "Christian Kniep <christian@qnib.org>"
 
 RUN yum install -y freetype-devel libpng-devel gcc gcc-c++ graphviz-devel && \
     pip install clustershell networkx matplotlib pygraphviz
