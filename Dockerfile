@@ -13,3 +13,5 @@ ADD etc/supervisord.d/scratchsetup.ini /etc/supervisord.d/
 ADD opt/qnib/bin/scratchsetup.sh /opt/qnib/bin/
 RUN yum install -y freetype-devel libpng-devel gcc gcc-c++ graphviz-devel && \
     pip install clustershell networkx matplotlib pygraphviz
+ADD etc/sensu/conf.d/slurmctld.json /etc/sensu/conf.d/
+ADD opt/qnib/slurm/bin/check_slurmctld.sh /opt/qnib/slurm/bin/
