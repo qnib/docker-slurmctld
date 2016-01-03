@@ -1,6 +1,6 @@
 {
   "checks": {
-    "munge": {
+    "slurmctld": {
       "command": "/opt/qnib/slurm/bin/check_slurmctld.sh",
       "standalone": true,
       "interval": 10
