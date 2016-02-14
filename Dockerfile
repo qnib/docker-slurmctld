@@ -3,7 +3,11 @@ FROM qnib/slurm
 
 ADD etc/supervisord.d/slurmctld.ini /etc/supervisord.d/
 ADD etc/consul.d/check_slurmctld.json /etc/consul.d/
-ADD opt/qnib/slurm/bin/ /opt/qnib/slurm/bin/
+ADD opt/qnib/slurm/bin/check_slurmctld.sh \ 
+    opt/qnib/slurm/bin/epilog.sh \
+    opt/qnib/slurm/bin/prolog.sh \
+    opt/qnib/slurm/bin/slurmstats.py \
+    /opt/qnib/slurm/bin/
 
 # Slurmstats
 ADD etc/supervisord.d/slurmstats.ini /etc/supervisord.d/
